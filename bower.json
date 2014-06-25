@@ -1,5 +1,8 @@
 {
   "name": "ol3",
   "version": "3.0.0-beta",
-  "main": "ol.js"
+  "main": [
+    "ol-whitespace.js",
+    "ol.css"
+  ]
 }
