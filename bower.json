@@ -2,7 +2,7 @@
   "name": "ol3",
   "version": "3.0.0-gamma.2",
   "main": [
-    "ol.js",
+    "ol-whitespace.js",
     "ol.css"
   ]
 }
