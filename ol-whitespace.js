@@ -1,4 +1,4 @@
-var CLOSURE_DEPS = false;
+var CLOSURE_NO_DEPS = true;
 var COMPILED = false;
 var goog = goog || {};
 goog.global = this;
