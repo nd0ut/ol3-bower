@@ -1,8 +1,8 @@
 {
   "name": "ol3",
-  "version": "3.0.0-gamma.2",
+  "version": "3.0.0-gamma.3",
   "main": [
-    "ol-whitespace.js",
+    "ol-debug.js",
     "ol.css"
   ]
 }
