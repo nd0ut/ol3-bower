@@ -1,3 +1,6 @@
+// OpenLayers 3. See http://ol3.js.org/
+// Version: v3.0.0-gamma.3-26-g69b4bc5
+
 var CLOSURE_NO_DEPS = true;
 // Copyright 2006 The Closure Library Authors. All Rights Reserved.
 //
@@ -45893,10 +45896,20 @@ goog.require('ol.xml');
  *
  * @constructor
  * @extends {ol.format.XMLFeature}
+ * @param {olx.format.GPXOptions=} opt_options Options.
  * @api
  */
-ol.format.GPX = function() {
+ol.format.GPX = function(opt_options) {
+
+  var options = goog.isDef(opt_options) ? opt_options : {};
+
   goog.base(this);
+
+  /**
+   * @type {function(ol.Feature, Node)|undefined}
+   * @private
+   */
+  this.readExtensions_ = options.readExtensions;
 };
 goog.inherits(ol.format.GPX, ol.format.XMLFeature);
 
@@ -45957,6 +45970,19 @@ ol.format.GPX.parseLink_ = function(node, objectStack) {
     goog.object.set(values, 'link', href);
   }
   ol.xml.parse(ol.format.GPX.LINK_PARSERS_, node, objectStack);
+};
+
+
+/**
+ * @param {Node} node Node.
+ * @param {Array.<*>} objectStack Object stack.
+ * @private
+ */
+ol.format.GPX.parseExtensions_ = function(node, objectStack) {
+  goog.asserts.assert(node.nodeType == goog.dom.NodeType.ELEMENT);
+  goog.asserts.assert(node.localName == 'extensions');
+  var values = /** @type {Object} */ (objectStack[objectStack.length - 1]);
+  goog.object.set(values, 'extensionsNode_', node);
 };
 
 
@@ -46147,6 +46173,7 @@ ol.format.GPX.RTE_PARSERS_ = ol.xml.makeParsersNS(
       'link': ol.format.GPX.parseLink_,
       'number':
           ol.xml.makeObjectPropertySetter(ol.format.XSD.readNonNegativeInteger),
+      'extensions': ol.format.GPX.parseExtensions_,
       'type': ol.xml.makeObjectPropertySetter(ol.format.XSD.readString),
       'rtept': ol.format.GPX.parseRtePt_
     });
@@ -46179,6 +46206,7 @@ ol.format.GPX.TRK_PARSERS_ = ol.xml.makeParsersNS(
       'number':
           ol.xml.makeObjectPropertySetter(ol.format.XSD.readNonNegativeInteger),
       'type': ol.xml.makeObjectPropertySetter(ol.format.XSD.readString),
+      'extensions': ol.format.GPX.parseExtensions_,
       'trkseg': ol.format.GPX.parseTrkSeg_
     });
 
@@ -46233,8 +46261,28 @@ ol.format.GPX.WPT_PARSERS_ = ol.xml.makeParsersNS(
       'ageofdgpsdata':
           ol.xml.makeObjectPropertySetter(ol.format.XSD.readDecimal),
       'dgpsid':
-          ol.xml.makeObjectPropertySetter(ol.format.XSD.readNonNegativeInteger)
+          ol.xml.makeObjectPropertySetter(ol.format.XSD.readNonNegativeInteger),
+      'extensions': ol.format.GPX.parseExtensions_
     });
+
+
+/**
+ * @param {Array.<ol.Feature>} features
+ * @private
+ */
+ol.format.GPX.prototype.handleReadExtensions_ = function(features) {
+  if (goog.isNull(features)) {
+    features = [];
+  }
+  for (var i = 0, ii = features.length; i < ii; ++i) {
+    var feature = features[i];
+    if (goog.isDef(this.readExtensions_)) {
+      var extensionsNode = feature.get('extensionsNode_') || null;
+      this.readExtensions_(feature, extensionsNode);
+    }
+    feature.set('extensionsNode_', undefined);
+  }
+};
 
 
 /**
@@ -46264,6 +46312,7 @@ ol.format.GPX.prototype.readFeatureFromNode = function(node) {
   if (!goog.isDef(feature)) {
     return null;
   }
+  this.handleReadExtensions_([feature]);
   return feature;
 };
 
@@ -46292,6 +46341,7 @@ ol.format.GPX.prototype.readFeaturesFromNode = function(node) {
         /** @type {Array.<ol.Feature>} */ ([]), ol.format.GPX.GPX_PARSERS_,
         node, []);
     if (goog.isDef(features)) {
+      this.handleReadExtensions_(features);
       return features;
     } else {
       return [];
@@ -57796,7 +57846,7 @@ ol.format.WKT.prototype.readProjectionFromText = function(text) {
  *
  * @function
  * @param {ol.Feature} feature Feature.
- * @return {ArrayBuffer|Node|Object|string} Result.
+ * @return {string} WKT string.
  * @api
  */
 ol.format.WKT.prototype.writeFeature;
@@ -57819,7 +57869,7 @@ ol.format.WKT.prototype.writeFeatureText = function(feature) {
  *
  * @function
  * @param {Array.<ol.Feature>} features Features.
- * @return {ArrayBuffer|Node|Object|string} Result.
+ * @return {string} WKT string.
  * @api
  */
 ol.format.WKT.prototype.writeFeatures;
@@ -57846,7 +57896,7 @@ ol.format.WKT.prototype.writeFeaturesText = function(features) {
  *
  * @function
  * @param {ol.geom.Geometry} geometry Geometry.
- * @return {ArrayBuffer|Node|Object|string} Node.
+ * @return {string} WKT string.
  * @api
  */
 ol.format.WKT.prototype.writeGeometry;
@@ -86213,8 +86263,8 @@ ol.MapProperty = {
 
 /**
  * @classdesc
- * The map is the core component of OpenLayers. In its minimal configuration it
- * needs a view, one or more layers, and a target container:
+ * The map is the core component of OpenLayers. For a map to render, a view,
+ * one or more layers, and a target container are needed:
  *
  *     var map = new ol.Map({
  *       view: new ol.View({
@@ -86423,6 +86473,7 @@ ol.Map = function(options) {
    * @private
    */
   this.viewportSizeMonitor_ = new goog.dom.ViewportSizeMonitor();
+  this.registerDisposable(this.viewportSizeMonitor_);
 
   goog.events.listen(this.viewportSizeMonitor_, goog.events.EventType.RESIZE,
       this.updateSize, false, this);
@@ -86693,7 +86744,7 @@ ol.Map.prototype.getEventPixel = function(event) {
   // but touchend and touchcancel events have no targetTouches when
   // the last finger is removed from the screen.
   // So we ourselves compute the position of touch events.
-  // See https://code.google.com/p/closure-library/issues/detail?id=588
+  // See https://github.com/google/closure-library/pull/323
   if (goog.isDef(event.changedTouches)) {
     var touch = event.changedTouches.item(0);
     var viewportPosition = goog.style.getClientPosition(this.viewport_);
@@ -90910,7 +90961,7 @@ ol.TileCache.prototype.expireCache = function(usedTiles) {
     if (zKey in usedTiles && usedTiles[zKey].contains(tile.tileCoord)) {
       break;
     } else {
-      this.pop();
+      this.pop().dispose();
     }
   }
 };
@@ -90926,7 +90977,7 @@ ol.TileCache.prototype.pruneTileRange = function(tileRange) {
   while (i--) {
     key = this.peekLastKey();
     if (tileRange.contains(ol.TileCoord.createFromString(key))) {
-      this.pop();
+      this.pop().dispose();
     } else {
       this.get(key);
     }
@@ -91135,19 +91186,25 @@ goog.require('ol.tilegrid.TileGrid');
 ol.tilegrid.XYZ = function(options) {
 
   var resolutions = new Array(options.maxZoom + 1);
-  var z;
-  var size = 2 * ol.proj.EPSG3857.HALF_SIZE / ol.DEFAULT_TILE_SIZE;
+  var z, halfSize;
+  if(options.projection) {
+    halfSize = ol.extent.getWidth(options.projection.getExtent()) / 2;
+  } else {
+    halfSize = ol.proj.EPSG3857.HALF_SIZE;
+  }
+
+  var size = 2 * halfSize / ol.DEFAULT_TILE_SIZE;
   for (z = 0; z <= options.maxZoom; ++z) {
     resolutions[z] = size / Math.pow(2, z);
   }
 
   goog.base(this, {
     minZoom: options.minZoom,
-    origin: [-ol.proj.EPSG3857.HALF_SIZE, ol.proj.EPSG3857.HALF_SIZE],
+    origin: [-halfSize, halfSize],
     resolutions: resolutions,
     tileSize: ol.DEFAULT_TILE_SIZE
   });
-
+  
 };
 goog.inherits(ol.tilegrid.XYZ, ol.tilegrid.TileGrid);
 
@@ -91411,6 +91468,157 @@ ol.source.BingMaps.prototype.handleImageryMetadataResponse =
 
   this.setState(ol.source.State.READY);
 
+};
+
+// FIXME keep cluster cache by resolution ?
+// FIXME distance not respected because of the centroid
+
+goog.provide('ol.source.Cluster');
+
+goog.require('goog.array');
+goog.require('goog.asserts');
+goog.require('goog.events.EventType');
+goog.require('goog.object');
+goog.require('ol.Feature');
+goog.require('ol.coordinate');
+goog.require('ol.extent');
+goog.require('ol.geom.Point');
+goog.require('ol.source.Vector');
+
+
+
+/**
+ * @constructor
+ * @param {olx.source.ClusterOptions} options
+ * @extends {ol.source.Vector}
+ * @api
+ */
+ol.source.Cluster = function(options) {
+  goog.base(this, {
+    attributions: options.attributions,
+    extent: options.extent,
+    logo: options.logo,
+    projection: options.projection
+  });
+
+  /**
+   * @type {number|undefined}
+   * @private
+   */
+  this.resolution_ = undefined;
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.distance_ = goog.isDef(options.distance) ? options.distance : 20;
+
+  /**
+   * @type {Array.<ol.Feature>}
+   * @private
+   */
+  this.features_ = [];
+
+  /**
+   * @type {ol.source.Vector}
+   * @private
+   */
+  this.source_ = options.source;
+
+  this.source_.on(goog.events.EventType.CHANGE,
+      ol.source.Cluster.prototype.onSourceChange_, this);
+};
+goog.inherits(ol.source.Cluster, ol.source.Vector);
+
+
+/**
+ * @param {ol.Extent} extent
+ * @param {number} resolution
+ */
+ol.source.Cluster.prototype.loadFeatures = function(extent, resolution) {
+  if (resolution !== this.resolution_) {
+    this.clear();
+    this.resolution_ = resolution;
+    this.cluster_();
+    this.addFeatures(this.features_);
+  }
+};
+
+
+/**
+ * handle the source changing
+ * @private
+ */
+ol.source.Cluster.prototype.onSourceChange_ = function() {
+  this.clear();
+  this.cluster_();
+  this.addFeatures(this.features_);
+  this.dispatchChangeEvent();
+};
+
+
+/**
+ * @private
+ */
+ol.source.Cluster.prototype.cluster_ = function() {
+  goog.array.clear(this.features_);
+  var extent = ol.extent.createEmpty();
+  goog.asserts.assert(goog.isDef(this.resolution_));
+  var mapDistance = this.distance_ * this.resolution_;
+  var features = this.source_.getFeatures();
+
+  /**
+   * @type {Object.<string, boolean>}
+   */
+  var clustered = {};
+
+  for (var i = 0, ii = features.length; i < ii; i++) {
+    var feature = features[i];
+    if (!goog.object.containsKey(clustered, goog.getUid(feature).toString())) {
+      var geometry = feature.getGeometry();
+      goog.asserts.assert(geometry instanceof ol.geom.Point);
+      var coordinates = geometry.getCoordinates();
+      ol.extent.createOrUpdateFromCoordinate(coordinates, extent);
+      ol.extent.buffer(extent, mapDistance, extent);
+
+      var neighbors = this.source_.getFeaturesInExtent(extent);
+      goog.asserts.assert(neighbors.length >= 1);
+      neighbors = goog.array.filter(neighbors, function(neighbor) {
+        var uid = goog.getUid(neighbor).toString();
+        if (!goog.object.containsKey(clustered, uid)) {
+          goog.object.set(clustered, uid, true);
+          return true;
+        } else {
+          return false;
+        }
+      });
+      this.features_.push(this.createCluster_(neighbors));
+    }
+  }
+  goog.asserts.assert(
+      goog.object.getCount(clustered) == this.source_.getFeatures().length);
+};
+
+
+/**
+ * @param {Array.<ol.Feature>} features Features
+ * @return {ol.Feature}
+ * @private
+ */
+ol.source.Cluster.prototype.createCluster_ = function(features) {
+  var length = features.length;
+  var centroid = [0, 0];
+  for (var i = 0; i < length; i++) {
+    var geometry = features[i].getGeometry();
+    goog.asserts.assert(geometry instanceof ol.geom.Point);
+    var coordinates = geometry.getCoordinates();
+    ol.coordinate.add(centroid, coordinates);
+  }
+  ol.coordinate.scale(centroid, 1 / length);
+
+  var cluster = new ol.Feature(new ol.geom.Point(centroid));
+  cluster.set('features', features);
+  return cluster;
 };
 
 goog.provide('ol.source.TileDebug');
@@ -95222,9 +95430,10 @@ ol.source.XYZ = function(options) {
   var maxZoom = goog.isDef(options.maxZoom) ? options.maxZoom : 18;
 
   var tileGrid = new ol.tilegrid.XYZ({
-    maxZoom: maxZoom
+    maxZoom: maxZoom,
+    projection: options.projection
   });
-
+  
   goog.base(this, {
     attributions: options.attributions,
     crossOrigin: options.crossOrigin,
@@ -98377,6 +98586,7 @@ goog.require('ol.render.Event');
 goog.require('ol.render.EventType');
 goog.require('ol.render.canvas.Immediate');
 goog.require('ol.source.BingMaps');
+goog.require('ol.source.Cluster');
 goog.require('ol.source.FormatVector');
 goog.require('ol.source.GPX');
 goog.require('ol.source.GeoJSON');
@@ -99618,6 +99828,10 @@ goog.exportSymbol(
 goog.exportSymbol(
     'ol.source.BingMaps.TOS_ATTRIBUTION',
     ol.source.BingMaps.TOS_ATTRIBUTION);
+
+goog.exportSymbol(
+    'ol.source.Cluster',
+    ol.source.Cluster);
 
 goog.exportSymbol(
     'ol.source.TileDebug',
@@ -102033,6 +102247,131 @@ goog.exportProperty(
     ol.source.BingMaps.prototype.unByKey);
 
 goog.exportProperty(
+    ol.source.Vector.prototype,
+    'getState',
+    ol.source.Vector.prototype.getState);
+
+goog.exportProperty(
+    ol.source.Vector.prototype,
+    'dispatchChangeEvent',
+    ol.source.Vector.prototype.dispatchChangeEvent);
+
+goog.exportProperty(
+    ol.source.Vector.prototype,
+    'getRevision',
+    ol.source.Vector.prototype.getRevision);
+
+goog.exportProperty(
+    ol.source.Vector.prototype,
+    'on',
+    ol.source.Vector.prototype.on);
+
+goog.exportProperty(
+    ol.source.Vector.prototype,
+    'once',
+    ol.source.Vector.prototype.once);
+
+goog.exportProperty(
+    ol.source.Vector.prototype,
+    'un',
+    ol.source.Vector.prototype.un);
+
+goog.exportProperty(
+    ol.source.Vector.prototype,
+    'unByKey',
+    ol.source.Vector.prototype.unByKey);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'addFeature',
+    ol.source.Cluster.prototype.addFeature);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'addFeatures',
+    ol.source.Cluster.prototype.addFeatures);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'clear',
+    ol.source.Cluster.prototype.clear);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'forEachFeature',
+    ol.source.Cluster.prototype.forEachFeature);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'forEachFeatureInExtent',
+    ol.source.Cluster.prototype.forEachFeatureInExtent);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'getFeatures',
+    ol.source.Cluster.prototype.getFeatures);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'getFeaturesAtCoordinate',
+    ol.source.Cluster.prototype.getFeaturesAtCoordinate);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'getClosestFeatureToCoordinate',
+    ol.source.Cluster.prototype.getClosestFeatureToCoordinate);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'getExtent',
+    ol.source.Cluster.prototype.getExtent);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'getFeatureById',
+    ol.source.Cluster.prototype.getFeatureById);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'removeFeature',
+    ol.source.Cluster.prototype.removeFeature);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'getState',
+    ol.source.Cluster.prototype.getState);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'dispatchChangeEvent',
+    ol.source.Cluster.prototype.dispatchChangeEvent);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'getRevision',
+    ol.source.Cluster.prototype.getRevision);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'on',
+    ol.source.Cluster.prototype.on);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'once',
+    ol.source.Cluster.prototype.once);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'un',
+    ol.source.Cluster.prototype.un);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
+    'unByKey',
+    ol.source.Cluster.prototype.unByKey);
+
+goog.exportProperty(
     ol.source.TileDebug.prototype,
     'getTileGrid',
     ol.source.TileDebug.prototype.getTileGrid);
@@ -102071,41 +102410,6 @@ goog.exportProperty(
     ol.source.TileDebug.prototype,
     'unByKey',
     ol.source.TileDebug.prototype.unByKey);
-
-goog.exportProperty(
-    ol.source.Vector.prototype,
-    'getState',
-    ol.source.Vector.prototype.getState);
-
-goog.exportProperty(
-    ol.source.Vector.prototype,
-    'dispatchChangeEvent',
-    ol.source.Vector.prototype.dispatchChangeEvent);
-
-goog.exportProperty(
-    ol.source.Vector.prototype,
-    'getRevision',
-    ol.source.Vector.prototype.getRevision);
-
-goog.exportProperty(
-    ol.source.Vector.prototype,
-    'on',
-    ol.source.Vector.prototype.on);
-
-goog.exportProperty(
-    ol.source.Vector.prototype,
-    'once',
-    ol.source.Vector.prototype.once);
-
-goog.exportProperty(
-    ol.source.Vector.prototype,
-    'un',
-    ol.source.Vector.prototype.un);
-
-goog.exportProperty(
-    ol.source.Vector.prototype,
-    'unByKey',
-    ol.source.Vector.prototype.unByKey);
 
 goog.exportProperty(
     ol.source.FormatVector.prototype,
