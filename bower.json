@@ -1,6 +1,6 @@
 {
   "name": "ol3",
-  "version": "3.0.0.2",
+  "version": "3.0.3",
   "main": [
     "ol-debug.js",
     "ol.css"

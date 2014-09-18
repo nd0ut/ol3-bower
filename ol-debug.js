@@ -1,6 +1,6 @@
 // OpenLayers 3. See http://openlayers.org/
 // License: https://raw.githubusercontent.com/openlayers/ol3/master/LICENSE.md
-// Version: v3.0.0-70-g163cc5b
+// Version: v3.0.0-96-g5416bad
 
 var CLOSURE_NO_DEPS = true;
 // Copyright 2006 The Closure Library Authors. All Rights Reserved.
@@ -16931,8 +16931,7 @@ ol.extent.closestSquaredDistanceXY = function(extent, x, y) {
  * @api stable
  */
 ol.extent.containsCoordinate = function(extent, coordinate) {
-  return extent[0] <= coordinate[0] && coordinate[0] <= extent[2] &&
-      extent[1] <= coordinate[1] && coordinate[1] <= extent[3];
+  return ol.extent.containsXY(extent, coordinate[0], coordinate[1]);
 };
 
 
@@ -16947,6 +16946,20 @@ ol.extent.containsCoordinate = function(extent, coordinate) {
 ol.extent.containsExtent = function(extent1, extent2) {
   return extent1[0] <= extent2[0] && extent2[2] <= extent1[2] &&
       extent1[1] <= extent2[1] && extent2[3] <= extent1[3];
+};
+
+
+/**
+ * Checks if the passed coordinate is contained or on the edge of the extent.
+ *
+ * @param {ol.Extent} extent Extent.
+ * @param {number} x X coordinate.
+ * @param {number} y Y coordinate.
+ * @return {boolean} Contains.
+ * @api stable
+ */
+ol.extent.containsXY = function(extent, x, y) {
+  return extent[0] <= x && x <= extent[2] && extent[1] <= y && y <= extent[3];
 };
 
 
@@ -17195,6 +17208,38 @@ ol.extent.extendXY = function(extent, x, y) {
   extent[1] = Math.min(extent[1], y);
   extent[2] = Math.max(extent[2], x);
   extent[3] = Math.max(extent[3], y);
+};
+
+
+/**
+ * This function calls `callback` for each corner of the extent. If the
+ * callback returns a truthy value the function returns that value
+ * immediately. Otherwise the function returns `false`.
+ * @param {ol.Extent} extent Extent.
+ * @param {function(this:T, ol.Coordinate): S} callback Callback.
+ * @param {T=} opt_this Value to use as `this` when executing `callback`.
+ * @return {S|boolean} Value.
+ * @template S, T
+ */
+ol.extent.forEachCorner = function(extent, callback, opt_this) {
+  var val;
+  val = callback.call(opt_this, ol.extent.getBottomLeft(extent));
+  if (val) {
+    return val;
+  }
+  val = callback.call(opt_this, ol.extent.getBottomRight(extent));
+  if (val) {
+    return val;
+  }
+  val = callback.call(opt_this, ol.extent.getTopRight(extent));
+  if (val) {
+    return val;
+  }
+  val = callback.call(opt_this, ol.extent.getBottomRight(extent));
+  if (val) {
+    return val;
+  }
+  return false;
 };
 
 
@@ -17501,7 +17546,7 @@ ol.extent.scaleFromCenter = function(extent, value) {
  * @param {ol.Coordinate} end Segment end coordinate.
  * @return {boolean} The segment intersects the extent.
  */
-ol.extent.segmentIntersects = function(extent, start, end) {
+ol.extent.intersectsSegment = function(extent, start, end) {
   var intersects = false;
   var startRel = ol.extent.coordinateRelationship(extent, start);
   var endRel = ol.extent.coordinateRelationship(extent, end);
@@ -32122,7 +32167,11 @@ ol.control.Rotate.prototype.handlePointerUp_ = function(pointerEvent) {
 ol.control.Rotate.prototype.resetNorth_ = function() {
   var map = this.getMap();
   var view = map.getView();
-  goog.asserts.assert(goog.isDef(view));
+  if (goog.isNull(view)) {
+    // the map does not have a view, so we can't act
+    // upon it
+    return;
+  }
   var currentRotation = view.getRotation();
   while (currentRotation < -Math.PI) {
     currentRotation += 2 * Math.PI;
@@ -32307,6 +32356,11 @@ ol.control.Zoom.prototype.handlePointerUp_ = function(delta, pointerEvent) {
 ol.control.Zoom.prototype.zoomByDelta_ = function(delta) {
   var map = this.getMap();
   var view = map.getView();
+  if (goog.isNull(view)) {
+    // the map does not have a view, so we can't act
+    // upon it
+    return;
+  }
   var currentResolution = view.getResolution();
   if (goog.isDef(currentResolution)) {
     if (this.duration_ > 0) {
@@ -38196,6 +38250,16 @@ ol.geom.Geometry.prototype.applyTransform = goog.abstractMethod;
 
 
 /**
+ * Test if the geometry and the passed extent intersect.
+ * @param {ol.Extent} extent Extent.
+ * @return {boolean} `true` if the geometry and the extent intersect.
+ * @function
+ * @api
+ */
+ol.geom.Geometry.prototype.intersectsExtent = goog.abstractMethod;
+
+
+/**
  * Transform each coordinate of the geometry from one coordinate reference
  * system to another. The geometry is modified in place.
  * For example, a line will be transformed to a line and a circle to a circle.
@@ -39462,9 +39526,10 @@ ol.Feature.prototype.getGeometryName = function() {
 
 /**
  * @return {ol.style.Style|Array.<ol.style.Style>|
- *     ol.feature.FeatureStyleFunction} Return the style as set by setStyle in
- *     the same format that it was provided in. If setStyle has not been run,
- *     return `undefined`.
+ *     ol.feature.FeatureStyleFunction} Return the style as set by `setStyle`
+ * in the same format that it was provided in. If `setStyle` has not been
+ * called, or if it was called with `null`, then `getStyle()` will return
+ * `null`.
  * @api stable
  */
 ol.Feature.prototype.getStyle = function() {
@@ -39525,13 +39590,17 @@ goog.exportProperty(
 
 
 /**
+ * Set the style for the feature.  This can be a single style object, an array
+ * of styles, or a function that takes a resolution and returns an array of
+ * styles. If it is `null` the feature has no style (a `null` style).
  * @param {ol.style.Style|Array.<ol.style.Style>|
- *     ol.feature.FeatureStyleFunction} style Set the style for this feature.
+ *     ol.feature.FeatureStyleFunction} style Style for this feature.
  * @api stable
  */
 ol.Feature.prototype.setStyle = function(style) {
   this.style_ = style;
-  this.styleFunction_ = ol.feature.createFeatureStyleFunction(style);
+  this.styleFunction_ = goog.isNull(style) ?
+      undefined : ol.feature.createFeatureStyleFunction(style);
   this.changed();
 };
 
@@ -39581,9 +39650,9 @@ ol.feature.FeatureStyleFunction;
  * Convert the provided object into a feature style function.  Functions passed
  * through unchanged.  Arrays of ol.style.Style or single style objects wrapped
  * in a new feature style function.
- * @param {ol.feature.FeatureStyleFunction|Array.<ol.style.Style>|
- *     ol.style.Style} obj A feature style function, a single style, or an array
- *     of styles.
+ * @param {ol.feature.FeatureStyleFunction|!Array.<ol.style.Style>|
+ *     !ol.style.Style} obj A feature style function, a single style, or an
+ *     array of styles.
  * @return {ol.feature.FeatureStyleFunction} A style function.
  */
 ol.feature.createFeatureStyleFunction = function(obj) {
@@ -40697,6 +40766,22 @@ ol.geom.GeometryCollection.prototype.getType = function() {
 
 
 /**
+ * @inheritDoc
+ * @api
+ */
+ol.geom.GeometryCollection.prototype.intersectsExtent = function(extent) {
+  var geometries = this.geometries_;
+  var i, ii;
+  for (i = 0, ii = geometries.length; i < ii; ++i) {
+    if (geometries[i].intersectsExtent(extent)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+
+/**
  * @return {boolean} Is empty.
  */
 ol.geom.GeometryCollection.prototype.isEmpty = function() {
@@ -41383,6 +41468,310 @@ ol.geom.flat.lineStringsCoordinateAtM = function(
   return null;
 };
 
+goog.provide('ol.geom.flat.contains');
+
+goog.require('goog.asserts');
+goog.require('ol.extent');
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {number} end End.
+ * @param {number} stride Stride.
+ * @param {ol.Extent} extent Extent.
+ * @return {boolean} Contains extent.
+ */
+ol.geom.flat.contains.linearRingContainsExtent =
+    function(flatCoordinates, offset, end, stride, extent) {
+  var outside = ol.extent.forEachCorner(extent,
+      /**
+       * @param {ol.Coordinate} coordinate Coordinate.
+       */
+      function(coordinate) {
+        return !ol.geom.flat.contains.linearRingContainsXY(flatCoordinates,
+            offset, end, stride, coordinate[0], coordinate[1]);
+      });
+  return !outside;
+};
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {number} end End.
+ * @param {number} stride Stride.
+ * @param {number} x X.
+ * @param {number} y Y.
+ * @return {boolean} Contains (x, y).
+ */
+ol.geom.flat.contains.linearRingContainsXY =
+    function(flatCoordinates, offset, end, stride, x, y) {
+  // http://www.ecse.rpi.edu/Homepages/wrf/Research/Short_Notes/pnpoly.html
+  var contains = false;
+  var x1 = flatCoordinates[end - stride];
+  var y1 = flatCoordinates[end - stride + 1];
+  for (; offset < end; offset += stride) {
+    var x2 = flatCoordinates[offset];
+    var y2 = flatCoordinates[offset + 1];
+    var intersect = ((y1 > y) != (y2 > y)) &&
+        (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1);
+    if (intersect) {
+      contains = !contains;
+    }
+    x1 = x2;
+    y1 = y2;
+  }
+  return contains;
+};
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {Array.<number>} ends Ends.
+ * @param {number} stride Stride.
+ * @param {number} x X.
+ * @param {number} y Y.
+ * @return {boolean} Contains (x, y).
+ */
+ol.geom.flat.contains.linearRingsContainsXY =
+    function(flatCoordinates, offset, ends, stride, x, y) {
+  goog.asserts.assert(ends.length > 0);
+  if (ends.length === 0) {
+    return false;
+  }
+  if (!ol.geom.flat.contains.linearRingContainsXY(
+      flatCoordinates, offset, ends[0], stride, x, y)) {
+    return false;
+  }
+  var i, ii;
+  for (i = 1, ii = ends.length; i < ii; ++i) {
+    if (ol.geom.flat.contains.linearRingContainsXY(
+        flatCoordinates, ends[i - 1], ends[i], stride, x, y)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {Array.<Array.<number>>} endss Endss.
+ * @param {number} stride Stride.
+ * @param {number} x X.
+ * @param {number} y Y.
+ * @return {boolean} Contains (x, y).
+ */
+ol.geom.flat.contains.linearRingssContainsXY =
+    function(flatCoordinates, offset, endss, stride, x, y) {
+  goog.asserts.assert(endss.length > 0);
+  if (endss.length === 0) {
+    return false;
+  }
+  var i, ii;
+  for (i = 0, ii = endss.length; i < ii; ++i) {
+    var ends = endss[i];
+    if (ol.geom.flat.contains.linearRingsContainsXY(
+        flatCoordinates, offset, ends, stride, x, y)) {
+      return true;
+    }
+    offset = ends[ends.length - 1];
+  }
+  return false;
+};
+
+goog.provide('ol.geom.flat.segments');
+
+
+/**
+ * This function calls `callback` for each segment of the flat coordinates
+ * array. If the callback returns a truthy value the function returns that
+ * value immediately. Otherwise the function returns `false`.
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {number} end End.
+ * @param {number} stride Stride.
+ * @param {function(ol.Coordinate, ol.Coordinate): T} callback Function
+ *     called for each segment.
+ * @return {T|boolean} Value.
+ * @template T
+ */
+ol.geom.flat.segments.forEach =
+    function(flatCoordinates, offset, end, stride, callback) {
+  var point1 = [flatCoordinates[offset], flatCoordinates[offset + 1]];
+  var point2 = [];
+  var ret;
+  for (; (offset + stride) < end; offset += stride) {
+    point2[0] = flatCoordinates[offset + stride];
+    point2[1] = flatCoordinates[offset + stride + 1];
+    ret = callback(point1, point2);
+    if (ret) {
+      return ret;
+    }
+    point1[0] = point2[0];
+    point1[1] = point2[1];
+  }
+  return false;
+};
+
+goog.provide('ol.geom.flat.intersectsextent');
+
+goog.require('goog.asserts');
+goog.require('ol.extent');
+goog.require('ol.geom.flat.contains');
+goog.require('ol.geom.flat.segments');
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {number} end End.
+ * @param {number} stride Stride.
+ * @param {ol.Extent} extent Extent.
+ * @return {boolean} True if the geometry and the extent intersect.
+ */
+ol.geom.flat.intersectsextent.lineString =
+    function(flatCoordinates, offset, end, stride, extent) {
+  var coordinatesExtent = ol.extent.extendFlatCoordinates(
+      ol.extent.createEmpty(), flatCoordinates, offset, end, stride);
+  if (!ol.extent.intersects(extent, coordinatesExtent)) {
+    return false;
+  }
+  if (ol.extent.containsExtent(extent, coordinatesExtent)) {
+    return true;
+  }
+  if (coordinatesExtent[0] >= extent[0] &&
+      coordinatesExtent[2] <= extent[2]) {
+    return true;
+  }
+  if (coordinatesExtent[1] >= extent[1] &&
+      coordinatesExtent[3] <= extent[3]) {
+    return true;
+  }
+  return ol.geom.flat.segments.forEach(flatCoordinates, offset, end, stride,
+      /**
+       * @param {ol.Coordinate} point1 Start point.
+       * @param {ol.Coordinate} point2 End point.
+       * @return {boolean} `true` if the segment and the extent intersect,
+       *     `false` otherwise.
+       */
+      function(point1, point2) {
+        return ol.extent.intersectsSegment(extent, point1, point2);
+      });
+};
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {Array.<number>} ends Ends.
+ * @param {number} stride Stride.
+ * @param {ol.Extent} extent Extent.
+ * @return {boolean} True if the geometry and the extent intersect.
+ */
+ol.geom.flat.intersectsextent.lineStrings =
+    function(flatCoordinates, offset, ends, stride, extent) {
+  var i, ii;
+  for (i = 0, ii = ends.length; i < ii; ++i) {
+    if (ol.geom.flat.intersectsextent.lineString(
+        flatCoordinates, offset, ends[i], stride, extent)) {
+      return true;
+    }
+    offset = ends[i];
+  }
+  return false;
+};
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {number} end End.
+ * @param {number} stride Stride.
+ * @param {ol.Extent} extent Extent.
+ * @return {boolean} True if the geometry and the extent intersect.
+ */
+ol.geom.flat.intersectsextent.linearRing =
+    function(flatCoordinates, offset, end, stride, extent) {
+  if (ol.geom.flat.intersectsextent.lineString(
+      flatCoordinates, offset, end, stride, extent)) {
+    return true;
+  }
+  if (ol.geom.flat.contains.linearRingContainsXY(
+      flatCoordinates, offset, end, stride, extent[0], extent[1])) {
+    return true;
+  }
+  if (ol.geom.flat.contains.linearRingContainsXY(
+      flatCoordinates, offset, end, stride, extent[0], extent[3])) {
+    return true;
+  }
+  if (ol.geom.flat.contains.linearRingContainsXY(
+      flatCoordinates, offset, end, stride, extent[2], extent[1])) {
+    return true;
+  }
+  if (ol.geom.flat.contains.linearRingContainsXY(
+      flatCoordinates, offset, end, stride, extent[2], extent[3])) {
+    return true;
+  }
+  return false;
+};
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {Array.<number>} ends Ends.
+ * @param {number} stride Stride.
+ * @param {ol.Extent} extent Extent.
+ * @return {boolean} True if the geometry and the extent intersect.
+ */
+ol.geom.flat.intersectsextent.linearRings =
+    function(flatCoordinates, offset, ends, stride, extent) {
+  goog.asserts.assert(ends.length > 0);
+  if (!ol.geom.flat.intersectsextent.linearRing(
+      flatCoordinates, offset, ends[0], stride, extent)) {
+    return false;
+  }
+  if (ends.length === 1) {
+    return true;
+  }
+  var i, ii;
+  for (i = 1, ii = ends.length; i < ii; ++i) {
+    if (ol.geom.flat.contains.linearRingContainsExtent(
+        flatCoordinates, ends[i - 1], ends[i], stride, extent)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+
+/**
+ * @param {Array.<number>} flatCoordinates Flat coordinates.
+ * @param {number} offset Offset.
+ * @param {Array.<Array.<number>>} endss Endss.
+ * @param {number} stride Stride.
+ * @param {ol.Extent} extent Extent.
+ * @return {boolean} True if the geometry and the extent intersect.
+ */
+ol.geom.flat.intersectsextent.linearRingss =
+    function(flatCoordinates, offset, endss, stride, extent) {
+  goog.asserts.assert(endss.length > 0);
+  var i, ii;
+  for (i = 0, ii = endss.length; i < ii; ++i) {
+    var ends = endss[i];
+    if (ol.geom.flat.intersectsextent.linearRings(
+        flatCoordinates, offset, ends, stride, extent)) {
+      return true;
+    }
+    offset = ends[ends.length - 1];
+  }
+  return false;
+};
+
 goog.provide('ol.geom.flat.length');
 
 
@@ -41839,6 +42228,7 @@ goog.require('ol.geom.flat.closest');
 goog.require('ol.geom.flat.deflate');
 goog.require('ol.geom.flat.inflate');
 goog.require('ol.geom.flat.interpolate');
+goog.require('ol.geom.flat.intersectsextent');
 goog.require('ol.geom.flat.length');
 goog.require('ol.geom.flat.simplify');
 
@@ -42021,6 +42411,17 @@ ol.geom.LineString.prototype.getType = function() {
 
 
 /**
+ * @inheritDoc
+ * @api
+ */
+ol.geom.LineString.prototype.intersectsExtent = function(extent) {
+  return ol.geom.flat.intersectsextent.lineString(
+      this.flatCoordinates, 0, this.flatCoordinates.length, this.stride,
+      extent);
+};
+
+
+/**
  * @param {Array.<ol.Coordinate>} coordinates Coordinates.
  * @param {ol.geom.GeometryLayout=} opt_layout Layout.
  * @api stable
@@ -42063,6 +42464,7 @@ goog.require('ol.geom.flat.closest');
 goog.require('ol.geom.flat.deflate');
 goog.require('ol.geom.flat.inflate');
 goog.require('ol.geom.flat.interpolate');
+goog.require('ol.geom.flat.intersectsextent');
 goog.require('ol.geom.flat.simplify');
 
 
@@ -42298,6 +42700,16 @@ ol.geom.MultiLineString.prototype.getType = function() {
 
 
 /**
+ * @inheritDoc
+ * @api
+ */
+ol.geom.MultiLineString.prototype.intersectsExtent = function(extent) {
+  return ol.geom.flat.intersectsextent.lineStrings(
+      this.flatCoordinates, 0, this.ends_, this.stride, extent);
+};
+
+
+/**
  * @param {Array.<Array.<ol.Coordinate>>} coordinates Coordinates.
  * @param {ol.geom.GeometryLayout=} opt_layout Layout.
  * @api stable
@@ -42453,6 +42865,16 @@ ol.geom.Point.prototype.getExtent = function(opt_extent) {
  */
 ol.geom.Point.prototype.getType = function() {
   return ol.geom.GeometryType.POINT;
+};
+
+
+/**
+ * @inheritDoc
+ * @api
+ */
+ol.geom.Point.prototype.intersectsExtent = function(extent) {
+  return ol.extent.containsXY(extent,
+      this.flatCoordinates[0], this.flatCoordinates[1]);
 };
 
 
@@ -42626,6 +43048,25 @@ ol.geom.MultiPoint.prototype.getPoints = function() {
  */
 ol.geom.MultiPoint.prototype.getType = function() {
   return ol.geom.GeometryType.MULTI_POINT;
+};
+
+
+/**
+ * @inheritDoc
+ * @api
+ */
+ol.geom.MultiPoint.prototype.intersectsExtent = function(extent) {
+  var flatCoordinates = this.flatCoordinates;
+  var stride = this.stride;
+  var i, ii, x, y;
+  for (i = 0, ii = flatCoordinates.length; i < ii; i += stride) {
+    x = flatCoordinates[i];
+    y = flatCoordinates[i + 1];
+    if (ol.extent.containsXY(extent, x, y)) {
+      return true;
+    }
+  }
+  return false;
 };
 
 
@@ -42880,98 +43321,6 @@ ol.geom.LinearRing.prototype.setFlatCoordinates =
   this.changed();
 };
 
-goog.provide('ol.geom.flat.contains');
-
-goog.require('goog.asserts');
-
-
-/**
- * @param {Array.<number>} flatCoordinates Flat coordinates.
- * @param {number} offset Offset.
- * @param {number} end End.
- * @param {number} stride Stride.
- * @param {number} x X.
- * @param {number} y Y.
- * @return {boolean} Contains (x, y).
- */
-ol.geom.flat.contains.linearRingContainsXY =
-    function(flatCoordinates, offset, end, stride, x, y) {
-  // http://www.ecse.rpi.edu/Homepages/wrf/Research/Short_Notes/pnpoly.html
-  var contains = false;
-  var x1 = flatCoordinates[end - stride];
-  var y1 = flatCoordinates[end - stride + 1];
-  for (; offset < end; offset += stride) {
-    var x2 = flatCoordinates[offset];
-    var y2 = flatCoordinates[offset + 1];
-    var intersect = ((y1 > y) != (y2 > y)) &&
-        (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1);
-    if (intersect) {
-      contains = !contains;
-    }
-    x1 = x2;
-    y1 = y2;
-  }
-  return contains;
-};
-
-
-/**
- * @param {Array.<number>} flatCoordinates Flat coordinates.
- * @param {number} offset Offset.
- * @param {Array.<number>} ends Ends.
- * @param {number} stride Stride.
- * @param {number} x X.
- * @param {number} y Y.
- * @return {boolean} Contains (x, y).
- */
-ol.geom.flat.contains.linearRingsContainsXY =
-    function(flatCoordinates, offset, ends, stride, x, y) {
-  goog.asserts.assert(ends.length > 0);
-  if (ends.length === 0) {
-    return false;
-  }
-  if (!ol.geom.flat.contains.linearRingContainsXY(
-      flatCoordinates, offset, ends[0], stride, x, y)) {
-    return false;
-  }
-  var i, ii;
-  for (i = 1, ii = ends.length; i < ii; ++i) {
-    if (ol.geom.flat.contains.linearRingContainsXY(
-        flatCoordinates, ends[i - 1], ends[i], stride, x, y)) {
-      return false;
-    }
-  }
-  return true;
-};
-
-
-/**
- * @param {Array.<number>} flatCoordinates Flat coordinates.
- * @param {number} offset Offset.
- * @param {Array.<Array.<number>>} endss Endss.
- * @param {number} stride Stride.
- * @param {number} x X.
- * @param {number} y Y.
- * @return {boolean} Contains (x, y).
- */
-ol.geom.flat.contains.linearRingssContainsXY =
-    function(flatCoordinates, offset, endss, stride, x, y) {
-  goog.asserts.assert(endss.length > 0);
-  if (endss.length === 0) {
-    return false;
-  }
-  var i, ii;
-  for (i = 0, ii = endss.length; i < ii; ++i) {
-    var ends = endss[i];
-    if (ol.geom.flat.contains.linearRingsContainsXY(
-        flatCoordinates, offset, ends, stride, x, y)) {
-      return true;
-    }
-    offset = ends[ends.length - 1];
-  }
-  return false;
-};
-
 goog.provide('ol.geom.flat.interiorpoint');
 
 goog.require('goog.asserts');
@@ -43220,6 +43569,7 @@ goog.require('ol.geom.flat.contains');
 goog.require('ol.geom.flat.deflate');
 goog.require('ol.geom.flat.inflate');
 goog.require('ol.geom.flat.interiorpoint');
+goog.require('ol.geom.flat.intersectsextent');
 goog.require('ol.geom.flat.orient');
 goog.require('ol.geom.flat.simplify');
 
@@ -43503,6 +43853,16 @@ ol.geom.Polygon.prototype.getType = function() {
 
 
 /**
+ * @inheritDoc
+ * @api
+ */
+ol.geom.Polygon.prototype.intersectsExtent = function(extent) {
+  return ol.geom.flat.intersectsextent.linearRings(
+      this.getOrientedFlatCoordinates(), 0, this.ends_, this.stride, extent);
+};
+
+
+/**
  * @param {Array.<Array.<ol.Coordinate>>} coordinates Coordinates.
  * @param {ol.geom.GeometryLayout=} opt_layout Layout.
  * @api stable
@@ -43611,6 +43971,7 @@ goog.require('ol.geom.flat.contains');
 goog.require('ol.geom.flat.deflate');
 goog.require('ol.geom.flat.inflate');
 goog.require('ol.geom.flat.interiorpoint');
+goog.require('ol.geom.flat.intersectsextent');
 goog.require('ol.geom.flat.orient');
 goog.require('ol.geom.flat.simplify');
 
@@ -43909,6 +44270,16 @@ ol.geom.MultiPolygon.prototype.getPolygons = function() {
  */
 ol.geom.MultiPolygon.prototype.getType = function() {
   return ol.geom.GeometryType.MULTI_POLYGON;
+};
+
+
+/**
+ * @inheritDoc
+ * @api
+ */
+ol.geom.MultiPolygon.prototype.intersectsExtent = function(extent) {
+  return ol.geom.flat.intersectsextent.linearRingss(
+      this.getOrientedFlatCoordinates(), 0, this.endss_, this.stride, extent);
 };
 
 
@@ -64974,7 +65345,7 @@ ol.interaction.DoubleClickZoom.prototype.handleMapBrowserEvent =
     var anchor = mapBrowserEvent.coordinate;
     var delta = browserEvent.shiftKey ? -this.delta_ : this.delta_;
     var view = map.getView();
-    goog.asserts.assert(goog.isDef(view));
+    goog.asserts.assert(!goog.isNull(view));
     ol.interaction.Interaction.zoomByDelta(
         map, view, delta, anchor, this.duration_);
     mapBrowserEvent.preventDefault();
@@ -70786,7 +71157,7 @@ ol.interaction.DragAndDrop.prototype.handleResult_ = function(file, result) {
   var projection = this.reprojectTo_;
   if (goog.isNull(projection)) {
     var view = map.getView();
-    goog.asserts.assert(goog.isDef(view));
+    goog.asserts.assert(!goog.isNull(view));
     projection = view.getProjection();
     goog.asserts.assert(goog.isDef(projection));
   }
@@ -72363,7 +72734,7 @@ goog.inherits(ol.interaction.DragZoom, ol.interaction.DragBox);
 ol.interaction.DragZoom.prototype.onBoxEnd = function() {
   var map = this.getMap();
   var view = map.getView();
-  goog.asserts.assert(goog.isDef(view));
+  goog.asserts.assert(!goog.isNull(view));
   var extent = this.getGeometry().getExtent();
   var center = ol.extent.getCenter(extent);
   var size = map.getSize();
@@ -77259,7 +77630,7 @@ ol.interaction.KeyboardPan.prototype.handleMapBrowserEvent =
         keyCode == goog.events.KeyCodes.UP)) {
       var map = mapBrowserEvent.map;
       var view = map.getView();
-      goog.asserts.assert(goog.isDef(view));
+      goog.asserts.assert(!goog.isNull(view));
       var viewState = view.getState();
       var mapUnitsDelta = viewState.resolution * this.pixelDelta_;
       var deltaX = 0, deltaY = 0;
@@ -77355,7 +77726,7 @@ ol.interaction.KeyboardZoom.prototype.handleMapBrowserEvent =
       var delta = (charCode == '+'.charCodeAt(0)) ? this.delta_ : -this.delta_;
       map.render();
       var view = map.getView();
-      goog.asserts.assert(goog.isDef(view));
+      goog.asserts.assert(!goog.isNull(view));
       ol.interaction.Interaction.zoomByDelta(
           map, view, delta, undefined, this.duration_);
       mapBrowserEvent.preventDefault();
@@ -77468,7 +77839,7 @@ ol.interaction.MouseWheelZoom.prototype.doZoom_ = function(map) {
   var delta = goog.math.clamp(this.delta_, -maxDelta, maxDelta);
 
   var view = map.getView();
-  goog.asserts.assert(goog.isDef(view));
+  goog.asserts.assert(!goog.isNull(view));
 
   map.render();
   ol.interaction.Interaction.zoomByDelta(map, view, -delta, this.lastAnchor_,
@@ -89802,7 +90173,7 @@ goog.exportProperty(
 /**
  * Get the view associated with this map. A view manages properties such as
  * center and resolution.
- * @return {ol.View|undefined} The view that controls this map.
+ * @return {ol.View} The view that controls this map.
  * @observable
  * @api stable
  */
@@ -90037,7 +90408,7 @@ ol.Map.prototype.handleViewChanged_ = function() {
     this.viewPropertyListenerKey_ = null;
   }
   var view = this.getView();
-  if (goog.isDefAndNotNull(view)) {
+  if (!goog.isNull(view)) {
     this.viewPropertyListenerKey_ = goog.events.listen(
         view, ol.ObjectEventType.PROPERTYCHANGE,
         this.handleViewPropertyChanged_, false, this);
@@ -90110,7 +90481,7 @@ ol.Map.prototype.isDef = function() {
     return false;
   }
   var view = this.getView();
-  if (!goog.isDef(view) || !view.isDef()) {
+  if (goog.isNull(view) || !view.isDef()) {
     return false;
   }
   return true;
@@ -90238,7 +90609,7 @@ ol.Map.prototype.renderFrame_ = function(time) {
   /** @type {?olx.FrameState} */
   var frameState = null;
   if (goog.isDef(size) && hasArea(size) &&
-      goog.isDef(view) && view.isDef()) {
+      !goog.isNull(view) && view.isDef()) {
     var viewHints = view.getHints();
     var layerStatesArray = this.getLayerGroup().getLayerStatesArray();
     var layerStates = {};
@@ -90270,17 +90641,17 @@ ol.Map.prototype.renderFrame_ = function(time) {
     });
   }
 
-  var preRenderFunctions = this.preRenderFunctions_;
-  var n = 0, preRenderFunction;
-  for (i = 0, ii = preRenderFunctions.length; i < ii; ++i) {
-    preRenderFunction = preRenderFunctions[i];
-    if (preRenderFunction(this, frameState)) {
-      preRenderFunctions[n++] = preRenderFunction;
-    }
-  }
-  preRenderFunctions.length = n;
-
   if (!goog.isNull(frameState)) {
+    var preRenderFunctions = this.preRenderFunctions_;
+    var n = 0, preRenderFunction;
+    for (i = 0, ii = preRenderFunctions.length; i < ii; ++i) {
+      preRenderFunction = preRenderFunctions[i];
+      if (preRenderFunction(this, frameState)) {
+        preRenderFunctions[n++] = preRenderFunction;
+      }
+    }
+    preRenderFunctions.length = n;
+
     frameState.extent = ol.extent.getForViewAndSize(viewState.center,
         viewState.resolution, viewState.rotation, frameState.size);
   }
@@ -91560,6 +91931,39 @@ ol.source.Vector.prototype.forEachFeatureInExtent =
 ol.source.Vector.prototype.forEachFeatureInExtentAtResolution =
     function(extent, resolution, f, opt_this) {
   return this.forEachFeatureInExtent(extent, f, opt_this);
+};
+
+
+/**
+ * This function executes the `callback` function once for each feature
+ * intersecting the `extent` until `callback` returns a truthy value. When
+ * `callback` returns a truthy value the function immediately returns that
+ * value. Otherwise the function returns `undefined`.
+ * @param {ol.Extent} extent Extent.
+ * @param {function(this: T, ol.Feature): S} f Callback.
+ * @param {T=} opt_this The object to use as `this` in `f`.
+ * @return {S|undefined}
+ * @template T,S
+ * @api
+ */
+ol.source.Vector.prototype.forEachFeatureIntersectingExtent =
+    function(extent, f, opt_this) {
+  return this.forEachFeatureInExtent(extent,
+      /**
+       * @param {ol.Feature} feature Feature.
+       * @return {S|undefined}
+       * @template S
+       */
+      function(feature) {
+        var geometry = feature.getGeometry();
+        goog.asserts.assert(goog.isDefAndNotNull(geometry));
+        if (geometry.intersectsExtent(extent)) {
+          var result = f.call(opt_this, feature);
+          if (result) {
+            return result;
+          }
+        }
+      });
 };
 
 
@@ -95339,12 +95743,16 @@ goog.require('ol.tilegrid.TileGrid');
 ol.tilegrid.XYZ = function(options) {
   var extent = goog.isDef(options.extent) ?
       options.extent : ol.proj.EPSG3857.EXTENT;
-  var resolutions = ol.tilegrid.resolutionsFromExtent(
+  var resolutions = goog.isDef(options.resolutions) ? options.resolutions :
+    ol.tilegrid.resolutionsFromExtent(
       extent, options.maxZoom, options.tileSize);
+
+  var origin = goog.isDef(options.origin) ? options.origin :
+    ol.extent.getCorner(extent, ol.extent.Corner.TOP_LEFT);
 
   goog.base(this, {
     minZoom: options.minZoom,
-    origin: ol.extent.getCorner(extent, ol.extent.Corner.TOP_LEFT),
+    origin: origin,
     resolutions: resolutions,
     tileSize: options.tileSize
   });
@@ -99556,7 +99964,9 @@ ol.source.XYZ = function(options) {
   var tileGrid = new ol.tilegrid.XYZ({
     extent: ol.tilegrid.extentFromProjection(projection),
     maxZoom: options.maxZoom,
-    tileSize: options.tileSize
+    tileSize: options.tileSize,
+    resolutions: options.resolutions,
+    origin: options.origin
   });
 
   goog.base(this, {
@@ -102127,6 +102537,10 @@ goog.exportSymbol(
     ol.extent.containsExtent);
 
 goog.exportSymbol(
+    'ol.extent.containsXY',
+    ol.extent.containsXY);
+
+goog.exportSymbol(
     'ol.extent.createEmpty',
     ol.extent.createEmpty);
 
@@ -103475,6 +103889,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.source.Vector.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.Vector.prototype.forEachFeatureIntersectingExtent);
+
+goog.exportProperty(
+    ol.source.Vector.prototype,
     'getFeatures',
     ol.source.Vector.prototype.getFeatures);
 
@@ -104073,6 +104492,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.geom.Geometry.prototype,
+    'intersectsExtent',
+    ol.geom.Geometry.prototype.intersectsExtent);
+
+goog.exportProperty(
+    ol.geom.Geometry.prototype,
     'transform',
     ol.geom.Geometry.prototype.transform);
 
@@ -104099,6 +104523,11 @@ goog.exportProperty(
     ol.geom.GeometryCollection.prototype,
     'getType',
     ol.geom.GeometryCollection.prototype.getType);
+
+goog.exportProperty(
+    ol.geom.GeometryCollection.prototype,
+    'intersectsExtent',
+    ol.geom.GeometryCollection.prototype.intersectsExtent);
 
 goog.exportProperty(
     ol.geom.GeometryCollection.prototype,
@@ -104170,6 +104599,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.geom.LineString.prototype,
+    'intersectsExtent',
+    ol.geom.LineString.prototype.intersectsExtent);
+
+goog.exportProperty(
+    ol.geom.LineString.prototype,
     'setCoordinates',
     ol.geom.LineString.prototype.setCoordinates);
 
@@ -104214,6 +104648,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.geom.MultiLineString.prototype,
+    'intersectsExtent',
+    ol.geom.MultiLineString.prototype.intersectsExtent);
+
+goog.exportProperty(
+    ol.geom.MultiLineString.prototype,
     'setCoordinates',
     ol.geom.MultiLineString.prototype.setCoordinates);
 
@@ -104250,6 +104689,11 @@ goog.exportProperty(
     ol.geom.MultiPoint.prototype,
     'getType',
     ol.geom.MultiPoint.prototype.getType);
+
+goog.exportProperty(
+    ol.geom.MultiPoint.prototype,
+    'intersectsExtent',
+    ol.geom.MultiPoint.prototype.intersectsExtent);
 
 goog.exportProperty(
     ol.geom.MultiPoint.prototype,
@@ -104302,6 +104746,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.geom.MultiPolygon.prototype,
+    'intersectsExtent',
+    ol.geom.MultiPolygon.prototype.intersectsExtent);
+
+goog.exportProperty(
+    ol.geom.MultiPolygon.prototype,
     'setCoordinates',
     ol.geom.MultiPolygon.prototype.setCoordinates);
 
@@ -104323,6 +104772,11 @@ goog.exportProperty(
     ol.geom.Point.prototype,
     'getType',
     ol.geom.Point.prototype.getType);
+
+goog.exportProperty(
+    ol.geom.Point.prototype,
+    'intersectsExtent',
+    ol.geom.Point.prototype.intersectsExtent);
 
 goog.exportProperty(
     ol.geom.Point.prototype,
@@ -104377,6 +104831,11 @@ goog.exportProperty(
     ol.geom.Polygon.prototype,
     'getType',
     ol.geom.Polygon.prototype.getType);
+
+goog.exportProperty(
+    ol.geom.Polygon.prototype,
+    'intersectsExtent',
+    ol.geom.Polygon.prototype.intersectsExtent);
 
 goog.exportProperty(
     ol.geom.Polygon.prototype,
@@ -105862,6 +106321,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.source.Cluster.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.Cluster.prototype.forEachFeatureIntersectingExtent);
+
+goog.exportProperty(
+    ol.source.Cluster.prototype,
     'getFeatures',
     ol.source.Cluster.prototype.getFeatures);
 
@@ -105964,6 +106428,11 @@ goog.exportProperty(
     ol.source.FormatVector.prototype,
     'forEachFeatureInExtent',
     ol.source.FormatVector.prototype.forEachFeatureInExtent);
+
+goog.exportProperty(
+    ol.source.FormatVector.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.FormatVector.prototype.forEachFeatureIntersectingExtent);
 
 goog.exportProperty(
     ol.source.FormatVector.prototype,
@@ -106077,6 +106546,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.source.StaticVector.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.StaticVector.prototype.forEachFeatureIntersectingExtent);
+
+goog.exportProperty(
+    ol.source.StaticVector.prototype,
     'getFeatures',
     ol.source.StaticVector.prototype.getFeatures);
 
@@ -106184,6 +106658,11 @@ goog.exportProperty(
     ol.source.GeoJSON.prototype,
     'forEachFeatureInExtent',
     ol.source.GeoJSON.prototype.forEachFeatureInExtent);
+
+goog.exportProperty(
+    ol.source.GeoJSON.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.GeoJSON.prototype.forEachFeatureIntersectingExtent);
 
 goog.exportProperty(
     ol.source.GeoJSON.prototype,
@@ -106297,6 +106776,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.source.GPX.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.GPX.prototype.forEachFeatureIntersectingExtent);
+
+goog.exportProperty(
+    ol.source.GPX.prototype,
     'getFeatures',
     ol.source.GPX.prototype.getFeatures);
 
@@ -106404,6 +106888,11 @@ goog.exportProperty(
     ol.source.IGC.prototype,
     'forEachFeatureInExtent',
     ol.source.IGC.prototype.forEachFeatureInExtent);
+
+goog.exportProperty(
+    ol.source.IGC.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.IGC.prototype.forEachFeatureIntersectingExtent);
 
 goog.exportProperty(
     ol.source.IGC.prototype,
@@ -106817,6 +107306,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.source.KML.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.KML.prototype.forEachFeatureIntersectingExtent);
+
+goog.exportProperty(
+    ol.source.KML.prototype,
     'getFeatures',
     ol.source.KML.prototype.getFeatures);
 
@@ -107157,6 +107651,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.source.OSMXML.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.OSMXML.prototype.forEachFeatureIntersectingExtent);
+
+goog.exportProperty(
+    ol.source.OSMXML.prototype,
     'getFeatures',
     ol.source.OSMXML.prototype.getFeatures);
 
@@ -107254,6 +107753,11 @@ goog.exportProperty(
     ol.source.ServerVector.prototype,
     'forEachFeatureInExtent',
     ol.source.ServerVector.prototype.forEachFeatureInExtent);
+
+goog.exportProperty(
+    ol.source.ServerVector.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.ServerVector.prototype.forEachFeatureIntersectingExtent);
 
 goog.exportProperty(
     ol.source.ServerVector.prototype,
@@ -107552,6 +108056,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.source.TileVector.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.TileVector.prototype.forEachFeatureIntersectingExtent);
+
+goog.exportProperty(
+    ol.source.TileVector.prototype,
     'getFeaturesAtCoordinate',
     ol.source.TileVector.prototype.getFeaturesAtCoordinate);
 
@@ -107714,6 +108223,11 @@ goog.exportProperty(
     ol.source.TopoJSON.prototype,
     'forEachFeatureInExtent',
     ol.source.TopoJSON.prototype.forEachFeatureInExtent);
+
+goog.exportProperty(
+    ol.source.TopoJSON.prototype,
+    'forEachFeatureIntersectingExtent',
+    ol.source.TopoJSON.prototype.forEachFeatureIntersectingExtent);
 
 goog.exportProperty(
     ol.source.TopoJSON.prototype,
@@ -109557,6 +110071,11 @@ goog.exportProperty(
 
 goog.exportProperty(
     ol.geom.SimpleGeometry.prototype,
+    'intersectsExtent',
+    ol.geom.SimpleGeometry.prototype.intersectsExtent);
+
+goog.exportProperty(
+    ol.geom.SimpleGeometry.prototype,
     'transform',
     ol.geom.SimpleGeometry.prototype.transform);
 
@@ -109609,6 +110128,11 @@ goog.exportProperty(
     ol.geom.Circle.prototype,
     'getClosestPoint',
     ol.geom.Circle.prototype.getClosestPoint);
+
+goog.exportProperty(
+    ol.geom.Circle.prototype,
+    'intersectsExtent',
+    ol.geom.Circle.prototype.intersectsExtent);
 
 goog.exportProperty(
     ol.geom.Circle.prototype,
@@ -109704,6 +110228,11 @@ goog.exportProperty(
     ol.geom.LinearRing.prototype,
     'getClosestPoint',
     ol.geom.LinearRing.prototype.getClosestPoint);
+
+goog.exportProperty(
+    ol.geom.LinearRing.prototype,
+    'intersectsExtent',
+    ol.geom.LinearRing.prototype.intersectsExtent);
 
 goog.exportProperty(
     ol.geom.LinearRing.prototype,
